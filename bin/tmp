@@ -103,7 +103,7 @@ def main(args):
     elif ns.rm:
         os.remove(filename)
     else:
-	mkdir_p(os.path.dirname(filename))
+        mkdir_p(os.path.dirname(filename))
         with open(filename, 'w') as f:
             f.write(kind['content'])
         chmod = ns.chmod if ns.chmod else kind['chmod']
