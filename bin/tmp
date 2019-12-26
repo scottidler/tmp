@@ -32,6 +32,15 @@ if os.path.islink(__file__):
 
 NAME, EXT = os.path.splitext(SCRIPT_NAME)
 
+def mkdir_p(path):
+    try:
+        os.makedirs(path)
+    except OSError as exc:  # Python >2.5
+        if exc.errno == errno.EEXIST and os.path.isdir(path):
+            pass
+        else:
+            raise
+
 def interpolate(kinds, templates):
     def visit(body):
         return dict(
@@ -63,7 +72,6 @@ def main(args):
     kinds = interpolate(config['kinds'], config['templates'])
     parser = ArgumentParser(
         parents=[parser])
-    #parser.set_defaults(**config)
     parser.add_argument(
         '-N', '--nerf',
         action='store_true',
@@ -95,6 +103,7 @@ def main(args):
     elif ns.rm:
         os.remove(filename)
     else:
+	mkdir_p(os.path.dirname(filename))
         with open(filename, 'w') as f:
             f.write(kind['content'])
         chmod = ns.chmod if ns.chmod else kind['chmod']
