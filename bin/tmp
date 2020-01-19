@@ -18,6 +18,7 @@ kinds:
 import os
 import re
 import sys
+import errno
 sys.dont_write_bytecode = True
 from ruamel import yaml
 from argparse import ArgumentParser, RawDescriptionHelpFormatter
