@@ -23,17 +23,19 @@ sys.dont_write_bytecode = True
 from ruamel import yaml
 from argparse import ArgumentParser, RawDescriptionHelpFormatter
 
-SCRIPT_FILE = os.path.abspath(__file__)
-SCRIPT_NAME = os.path.basename(SCRIPT_FILE)
-SCRIPT_PATH = os.path.dirname(SCRIPT_FILE)
+REAL_FILE = os.path.abspath(__file__)
+REAL_NAME = os.path.basename(REAL_FILE)
+REAL_PATH = os.path.dirname(REAL_FILE)
 if os.path.islink(__file__):
-    REAL_FILE = os.path.abspath(os.readlink(__file__))
-    REAL_NAME = os.path.basename(REAL_FILE)
-    REAL_PATH = os.path.dirname(REAL_FILE)
+    LINK_FILE = REAL_FILE; REAL_FILE = os.path.abspath(os.readlink(__file__))
+    LINK_NAME = REAL_NAME; REAL_NAME = os.path.basename(REAL_FILE)
+    LINK_PATH = REAL_PATH; REAL_PATH = os.path.dirname(REAL_FILE)
 
-NAME, EXT = os.path.splitext(SCRIPT_NAME)
+NAME, EXT = os.path.splitext(REAL_NAME)
 
 def mkdir_p(path):
+    if not path:
+        return
     try:
         os.makedirs(path)
     except OSError as exc:  # Python >2.5
