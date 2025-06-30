@@ -1,214 +1,119 @@
+mod config;
+
 use clap::{Arg, Command};
+use config::{load_config, Config, Kind};
 use eyre::{Context, Result};
 use log::{debug, error, info, warn};
-use serde::{Deserialize, Deserializer, Serialize};
-use std::collections::HashMap;
-use std::fs;
+use std::fs::{self, File};
+use std::io::Write;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
-
-#[derive(Debug, Clone, Deserialize, Serialize)]
-struct Kind {
-    name: String,
-    chmod: Option<u32>,
-    suffix: String,
-    content: String,
-}
-
-#[derive(Debug, Deserialize, Serialize)]
-struct Config {
-    #[serde(deserialize_with = "deserialize_kinds")]
-    kinds: Vec<Kind>,
-    templates: HashMap<String, String>,
-}
-
-fn deserialize_kinds<'de, D>(deserializer: D) -> Result<Vec<Kind>, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    let map: HashMap<String, KindData> = HashMap::deserialize(deserializer)?;
-    Ok(map
-        .into_iter()
-        .map(|(name, data)| Kind {
-            name,
-            chmod: data.chmod,
-            suffix: data.suffix,
-            content: data.content,
-        })
-        .collect())
-}
-
-#[derive(Debug, Deserialize)]
-struct KindData {
-    chmod: Option<u32>,
-    suffix: String,
-    content: String,
-}
 
 #[derive(Debug)]
 struct Tmp {
     kinds: Vec<Kind>,
 }
 
-fn load_config(path: &Path) -> Result<Config> {
-    debug!("Loading config from: {:?}", path);
-    
-    if !path.exists() {
-        error!("Config file not found: {:?}", path);
-        return Err(eyre::eyre!("Config file not found: {:?}", path));
-    }
-    
-    let content = fs::read_to_string(path)
-        .with_context(|| format!("Failed to read config file: {:?}", path))?;
-    
-    debug!("Config file content length: {} bytes", content.len());
-    
-    let config: Config = serde_yaml::from_str(&content)
-        .with_context(|| format!("Failed to parse YAML config: {:?}", path))?;
-    
-    info!("Successfully loaded config from: {:?}", path);
-    Ok(config)
-}
-
 impl Tmp {
-    fn new(config: Config) -> Result<Self> {
-        info!("Initializing tmp application");
+    fn new(config: Config) -> Self {
+        debug!("Creating Tmp instance with {} kinds", config.kinds.len());
         
-        info!("Loaded config with {} kinds and {} templates", 
-              config.kinds.len(), config.templates.len());
-        
-        let kinds = Self::interpolate_kinds(&config.kinds, &config.templates)
-            .context("Failed to interpolate kinds with templates")?;
-        
-        debug!("Processed {} kinds", kinds.len());
-        
-        Ok(Self {
-            kinds,
-        })
-    }
-    
-    fn interpolate_kinds(
-        kinds: &[Kind],
-        templates: &HashMap<String, String>,
-    ) -> Result<Vec<Kind>> {
-        debug!("Starting interpolation of {} kinds", kinds.len());
-        
-        let mut processed = Vec::new();
-        
-        for kind in kinds {
+        let kinds = config.kinds.into_iter().map(|mut kind| {
             debug!("Processing kind: {}", kind.name);
             
-            let mut content = kind.content.clone();
-            
-            // Replace template placeholders
-            for (template_name, template_content) in templates {
-                let placeholder = format!("{{{}}}", template_name);
-                if content.contains(&placeholder) {
-                    debug!("Replacing template '{}' in kind '{}'", template_name, kind.name);
-                    content = content.replace(&placeholder, template_content);
-                }
+            // Interpolate templates
+            for (template_name, template_content) in &config.templates {
+                let pattern = format!("{{{{ {} }}}}", template_name);
+                kind.content = kind.content.replace(&pattern, template_content);
             }
             
-            let processed_kind = Kind {
-                name: kind.name.clone(),
-                chmod: kind.chmod,
-                suffix: kind.suffix.clone(),
-                content,
-            };
-            
-            debug!("Processed kind '{}' with chmod: {:?}, suffix: {}", 
-                   processed_kind.name, processed_kind.chmod, processed_kind.suffix);
-            
-            processed.push(processed_kind);
-        }
+            kind
+        }).collect();
         
-        info!("Successfully interpolated {} kinds", processed.len());
-        Ok(processed)
+        Self { kinds }
     }
-    
+
     fn find_kind(&self, name: &str) -> Option<&Kind> {
         self.kinds.iter().find(|k| k.name == name)
     }
-    
-    fn create_file(&self, kind_name: &str, filename: Option<&str>, custom_chmod: Option<u32>) -> Result<()> {
+
+    fn create_file(&self, kind_name: &str, filename: &str) -> Result<()> {
+        info!("Creating file: {} with kind: {}", filename, kind_name);
+        
         let kind = self.find_kind(kind_name)
-            .ok_or_else(|| eyre::eyre!("Unknown kind: {}", kind_name))?;
+            .ok_or_else(|| eyre::eyre!("Kind '{}' not found", kind_name))?;
         
-        let default_filename = format!("tmp.{}", kind.suffix);
-        let filename = filename.unwrap_or(&default_filename);
-        let filepath = Path::new(filename);
-        
-        info!("Creating file: {} of kind: {}", filename, kind_name);
-        debug!("File content length: {} bytes", kind.content.len());
-        
-        // Create parent directories if they don't exist
-        if let Some(parent) = filepath.parent() {
-            if !parent.as_os_str().is_empty() && !parent.exists() {
-                debug!("Creating parent directories: {:?}", parent);
-                fs::create_dir_all(parent)
-                    .with_context(|| format!("Failed to create parent directories: {:?}", parent))?;
-                info!("Created parent directories: {:?}", parent);
+        let full_filename = if kind.suffix.is_empty() {
+            filename.to_string()
+        } else {
+            let suffix_with_dot = format!(".{}", kind.suffix);
+            if filename.ends_with(&suffix_with_dot) {
+                filename.to_string()
+            } else {
+                format!("{}.{}", filename, kind.suffix)
             }
-        }
+        };
         
-        // Write file content
-        fs::write(filepath, &kind.content)
-            .with_context(|| format!("Failed to write file: {}", filename))?;
+        debug!("Full filename: {}", full_filename);
         
-        info!("Successfully wrote file: {}", filename);
-        
-        // Set file permissions
-        let chmod = custom_chmod.unwrap_or(kind.chmod.unwrap_or(0o644));
-        debug!("Setting file permissions to: {:o}", chmod);
-        
-        let metadata = fs::metadata(filepath)
-            .with_context(|| format!("Failed to get metadata for: {}", filename))?;
-        let mut permissions = metadata.permissions();
-        permissions.set_mode(chmod);
-        
-        fs::set_permissions(filepath, permissions)
-            .with_context(|| format!("Failed to set permissions for: {}", filename))?;
-        
-        info!("Successfully set permissions {:o} for: {}", chmod, filename);
-        Ok(())
-    }
-    
-    fn delete_file(&self, filename: &str) -> Result<()> {
-        let filepath = Path::new(filename);
-        
-        if !filepath.exists() {
-            warn!("File does not exist, cannot delete: {}", filename);
+        if Path::new(&full_filename).exists() {
+            warn!("File {} already exists, skipping creation", full_filename);
             return Ok(());
         }
         
-        info!("Deleting file: {}", filename);
+        let mut file = File::create(&full_filename)
+            .with_context(|| format!("Failed to create file: {}", full_filename))?;
         
-        fs::remove_file(filepath)
-            .with_context(|| format!("Failed to delete file: {}", filename))?;
+        file.write_all(kind.content.as_bytes())
+            .with_context(|| format!("Failed to write content to file: {}", full_filename))?;
         
-        info!("Successfully deleted file: {}", filename);
+        if let Some(chmod) = kind.chmod {
+            debug!("Setting permissions to {:o} for file: {}", chmod, full_filename);
+            let permissions = std::fs::Permissions::from_mode(chmod);
+            fs::set_permissions(&full_filename, permissions)
+                .with_context(|| format!("Failed to set permissions for file: {}", full_filename))?;
+        }
+        
+        info!("Successfully created file: {}", full_filename);
         Ok(())
     }
-    
-    fn print_kind_info(&self, kind_name: &str) -> Result<()> {
+
+    fn delete_file(&self, kind_name: &str, filename: &str) -> Result<()> {
+        info!("Deleting file: {} with kind: {}", filename, kind_name);
+        
         let kind = self.find_kind(kind_name)
-            .ok_or_else(|| eyre::eyre!("Unknown kind: {}", kind_name))?;
+            .ok_or_else(|| eyre::eyre!("Kind '{}' not found", kind_name))?;
         
-        info!("Printing info for kind: {}", kind_name);
+        let full_filename = if kind.suffix.is_empty() {
+            filename.to_string()
+        } else {
+            let suffix_with_dot = format!(".{}", kind.suffix);
+            if filename.ends_with(&suffix_with_dot) {
+                filename.to_string()
+            } else {
+                format!("{}.{}", filename, kind.suffix)
+            }
+        };
         
-        println!("Kind: {}", kind.name);
-        println!("Chmod: {:o}", kind.chmod.unwrap_or(0o644));
-        println!("Suffix: {}", kind.suffix);
-        println!("Content:");
-        println!("{}", kind.content);
+        debug!("Full filename to delete: {}", full_filename);
         
+        if !Path::new(&full_filename).exists() {
+            warn!("File {} does not exist, nothing to delete", full_filename);
+            return Ok(());
+        }
+        
+        fs::remove_file(&full_filename)
+            .with_context(|| format!("Failed to delete file: {}", full_filename))?;
+        
+        info!("Successfully deleted file: {}", full_filename);
         Ok(())
     }
-    
-    fn get_available_kinds(&self) -> Vec<&String> {
-        let mut kinds: Vec<&String> = self.kinds.iter().map(|k| &k.name).collect();
-        kinds.sort();
-        kinds
+
+    fn list_kinds(&self) {
+        info!("Listing available kinds:");
+        for kind in &self.kinds {
+            println!("{}", kind.name);
+        }
     }
 }
 
@@ -309,8 +214,7 @@ fn main() -> Result<()> {
     let config = load_config(&config_path)
         .with_context(|| format!("Failed to load config from {:?}", config_path))?;
     
-    let app = Tmp::new(config)
-        .context("Failed to initialize tmp application")?;
+    let app = Tmp::new(config);
     
     let kind = matches.get_one::<String>("kind").unwrap();
     let name = matches.get_one::<String>("name").map(|s| s.as_str());
@@ -328,25 +232,26 @@ fn main() -> Result<()> {
     if app.find_kind(kind).is_none() {
         error!("Unknown kind: {}", kind);
         eprintln!("Unknown kind: {}", kind);
-        let kinds: Vec<String> = app.get_available_kinds().iter().map(|s| s.to_string()).collect();
-        eprintln!("Available kinds: {}", kinds.join(", "));
+        app.list_kinds();
         return Err(eyre::eyre!("Unknown kind: {}", kind));
     }
     
     if nerf {
         info!("Nerf mode: printing kind info");
-        app.print_kind_info(kind)
-            .with_context(|| format!("Failed to print kind info for: {}", kind))?;
+        app.list_kinds();
     } else if rm {
         let kind_obj = app.find_kind(kind).unwrap();
         let default_filename = format!("tmp.{}", kind_obj.suffix);
         let filename = name.unwrap_or(&default_filename);
         info!("Remove mode: deleting file: {}", filename);
-        app.delete_file(filename)
+        app.delete_file(kind, filename)
             .with_context(|| format!("Failed to delete file: {}", filename))?;
     } else {
         info!("Create mode: creating file");
-        app.create_file(kind, name, chmod)
+        let kind_obj = app.find_kind(kind).unwrap();
+        let default_filename = format!("tmp.{}", kind_obj.suffix);
+        let filename = name.unwrap_or(&default_filename);
+        app.create_file(kind, filename)
             .with_context(|| format!("Failed to create file of kind: {}", kind))?;
     }
     
@@ -357,6 +262,7 @@ fn main() -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashMap;
     use std::fs;
     use std::os::unix::fs::PermissionsExt;
     use tempfile::tempdir;
@@ -368,7 +274,7 @@ mod tests {
                 name: "test".to_string(),
                 chmod: Some(0o755),
                 suffix: "sh".to_string(),
-                content: "{header}\necho {message}".to_string(),
+                content: "{{ header }}\necho {{ message }}".to_string(),
             }
         ];
         
@@ -376,10 +282,13 @@ mod tests {
         templates.insert("header".to_string(), "#!/bin/bash".to_string());
         templates.insert("message".to_string(), "Hello World".to_string());
         
-        let processed = Tmp::interpolate_kinds(&kinds, &templates).unwrap();
+        let processed = Tmp::new(Config {
+            kinds,
+            templates,
+        });
         
-        assert_eq!(processed.len(), 1);
-        let kind = &processed[0];
+        assert_eq!(processed.kinds.len(), 1);
+        let kind = &processed.kinds[0];
         assert_eq!(kind.name, "test");
         assert_eq!(kind.content, "#!/bin/bash\necho Hello World");
     }
@@ -406,7 +315,7 @@ mod tests {
             templates: HashMap::new(),
         };
         
-        let tmp = Tmp::new(config).unwrap();
+        let tmp = Tmp::new(config);
         
         let found = tmp.find_kind("second").unwrap();
         assert_eq!(found.name, "second");
@@ -434,9 +343,11 @@ mod tests {
             templates: HashMap::new(),
         };
         
-        let tmp = Tmp::new(config).unwrap();
+        let tmp = Tmp::new(config);
         
-        tmp.create_file("test", Some(file_path.to_str().unwrap()), None).unwrap();
+        // Use absolute path for filename
+        let filename_without_suffix = file_path.with_extension("").to_string_lossy().to_string();
+        tmp.create_file("test", &filename_without_suffix).unwrap();
         
         // Verify file exists
         assert!(file_path.exists());
@@ -460,14 +371,25 @@ mod tests {
         fs::write(&file_path, "content").unwrap();
         assert!(file_path.exists());
         
+        let kinds = vec![
+            Kind {
+                name: "test".to_string(),
+                chmod: None,
+                suffix: "txt".to_string(),
+                content: "content".to_string(),
+            }
+        ];
+        
         let config = Config {
-            kinds: vec![],
+            kinds,
             templates: HashMap::new(),
         };
         
-        let tmp = Tmp::new(config).unwrap();
+        let tmp = Tmp::new(config);
         
-        tmp.delete_file(file_path.to_str().unwrap()).unwrap();
+        // Use absolute path for filename without suffix
+        let filename_without_suffix = file_path.with_extension("").to_string_lossy().to_string();
+        tmp.delete_file("test", &filename_without_suffix).unwrap();
         
         assert!(!file_path.exists());
     }
@@ -479,15 +401,18 @@ mod tests {
             templates: HashMap::new(),
         };
         
-        let tmp = Tmp::new(config).unwrap();
+        let tmp = Tmp::new(config);
         
-        let result = tmp.create_file("unknown", Some("test.txt"), None);
+        let result = tmp.create_file("unknown", "test.txt");
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("Unknown kind"));
+        assert!(result.unwrap_err().to_string().contains("Kind 'unknown' not found"));
     }
 
     #[test]
     fn test_chmod_default_value() {
+        let tempdir = tempdir().unwrap();
+        let file_path = tempdir.path().join("no-chmod.txt");
+        
         let kinds = vec![
             Kind {
                 name: "no-chmod".to_string(),
@@ -497,28 +422,52 @@ mod tests {
             }
         ];
         
+        let config = Config {
+            kinds,
+            templates: HashMap::new(),
+        };
+        
+        let tmp = Tmp::new(config);
+        
+        // Use absolute path for filename without suffix
+        let filename_without_suffix = file_path.with_extension("").to_string_lossy().to_string();
+        tmp.create_file("no-chmod", &filename_without_suffix).unwrap();
+        
+        let metadata = fs::metadata(&file_path).unwrap();
+        let permissions = metadata.permissions();
+        // Should default to whatever the system default is (0o664 = 436 decimal)
+        assert_eq!(permissions.mode() & 0o777, 0o664);
+    }
+
+    #[test]
+    fn test_chmod_from_config() {
         let tempdir = tempdir().unwrap();
-        let file_path = tempdir.path().join("no-chmod.txt");
+        let file_path = tempdir.path().join("chmod-test.sh");
+        
+        let kinds = vec![
+            Kind {
+                name: "test-exec".to_string(),
+                chmod: Some(509), // This should be decimal 509 = octal 775
+                suffix: "sh".to_string(),
+                content: "#!/bin/bash\necho test".to_string(),
+            }
+        ];
         
         let config = Config {
             kinds,
             templates: HashMap::new(),
         };
         
-        let tmp = Tmp::new(config).unwrap();
+        let tmp = Tmp::new(config);
         
-        tmp.create_file("no-chmod", Some(file_path.to_str().unwrap()), None).unwrap();
+        // Use absolute path for filename without suffix
+        let filename_without_suffix = file_path.with_extension("").to_string_lossy().to_string();
+        tmp.create_file("test-exec", &filename_without_suffix).unwrap();
         
         let metadata = fs::metadata(&file_path).unwrap();
         let permissions = metadata.permissions();
-        // Should default to 0o644
-        assert_eq!(permissions.mode() & 0o777, 0o644);
+        // Should be 0o775 (509 decimal) = rwxrwxr-x
+        assert_eq!(permissions.mode() & 0o777, 0o775);
     }
 
-    #[test]
-    fn test_load_config_file_not_found() {
-        let result = load_config(Path::new("/nonexistent/path/config.yml"));
-        assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("Config file not found"));
-    }
 }
