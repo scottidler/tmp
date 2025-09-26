@@ -34,7 +34,7 @@ where
             if let Some(chmod) = data.chmod {
                 data.chmod = Some(interpret_chmod_value(chmod));
             }
-            
+
             Kind {
                 name,
                 chmod: data.chmod,
@@ -84,20 +84,20 @@ struct KindData {
 
 pub fn load_config(path: &Path) -> Result<Config> {
     debug!("Loading config from: {:?}", path);
-    
+
     if !path.exists() {
         error!("Config file not found: {:?}", path);
         return Err(eyre::eyre!("Config file not found: {:?}", path));
     }
-    
+
     let content = fs::read_to_string(path)
         .with_context(|| format!("Failed to read config file: {:?}", path))?;
-    
+
     debug!("Config file content length: {} bytes", content.len());
-    
+
     let config: Config = serde_yaml::from_str(&content)
         .with_context(|| format!("Failed to parse YAML config: {:?}", path))?;
-    
+
     info!("Successfully loaded config from: {:?}", path);
     Ok(config)
 }
@@ -120,7 +120,7 @@ mod tests {
         let tempdir = tempdir().unwrap();
         let temp_file = tempdir.path().join("invalid.yml");
         fs::write(&temp_file, "invalid: yaml: content: [").unwrap();
-        
+
         let result = load_config(&temp_file);
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("Failed to parse YAML"));
@@ -129,16 +129,16 @@ mod tests {
     #[test]
     fn test_load_config_valid() {
         let yaml_content = "kinds:\n  test:\n    chmod: 755\n    suffix: sh\n    content: |\n      echo test\ntemplates:\n  header: \"bash header\"";
-        
+
         let tempdir = tempdir().unwrap();
         let temp_file = tempdir.path().join("valid.yml");
         fs::write(&temp_file, yaml_content).unwrap();
-        
+
         let config = load_config(&temp_file).unwrap();
-        
+
         assert_eq!(config.kinds.len(), 1);
         assert_eq!(config.templates.len(), 1);
-        
+
         let kind = &config.kinds[0];
         assert_eq!(kind.name, "test");
         assert_eq!(kind.chmod, Some(0o755));
@@ -150,15 +150,15 @@ mod tests {
         let yaml = "kinds:\n  test-kind:\n    chmod: 755\n    suffix: sh\n    content: |\n      echo test\n  another-kind:\n    suffix: py\n    content: |\n      print hello\ntemplates:\n  header: \"Header\"";
 
         let config: Config = serde_yaml::from_str(yaml).expect("Failed to parse config");
-        
+
         assert_eq!(config.kinds.len(), 2);
         assert_eq!(config.templates.len(), 1);
-        
+
         let test_kind = config.kinds.iter().find(|k| k.name == "test-kind").unwrap();
         assert_eq!(test_kind.chmod, Some(0o755));
         assert_eq!(test_kind.suffix, "sh");
         assert!(test_kind.content.contains("echo test"));
-        
+
         let another_kind = config.kinds.iter().find(|k| k.name == "another-kind").unwrap();
         assert_eq!(another_kind.chmod, None);
         assert_eq!(another_kind.suffix, "py");
@@ -170,9 +170,9 @@ mod tests {
         let yaml = "kinds:\n  test-script:\n    chmod: 775\n    suffix: sh\n    content: |\n      echo test\ntemplates:\n  header: \"Header\"";
 
         let config: Config = serde_yaml::from_str(yaml).expect("Failed to parse config");
-        
+
         assert_eq!(config.kinds.len(), 1);
-        
+
         let kind = &config.kinds[0];
         assert_eq!(kind.name, "test-script");
         // 775 in config should be interpreted as octal 775 = decimal 509
@@ -185,13 +185,13 @@ mod tests {
         // Test that already-correct decimal values are preserved
         assert_eq!(interpret_chmod_value(509), 509); // Already correct decimal for 0o775
         assert_eq!(interpret_chmod_value(420), 420); // Already correct decimal for 0o644
-        
+
         // Test common octal-as-decimal interpretations
         assert_eq!(interpret_chmod_value(755), 0o755); // 755 -> 0o755 (493 decimal)
         assert_eq!(interpret_chmod_value(775), 0o775); // 775 -> 0o775 (509 decimal)
         assert_eq!(interpret_chmod_value(644), 0o644); // 644 -> 0o644 (420 decimal)
-        
+
         // Test invalid octal digits (should remain unchanged)
         assert_eq!(interpret_chmod_value(789), 789); // Contains 8,9 - not valid octal
     }
-} 
+}
