@@ -83,22 +83,21 @@ struct KindData {
 }
 
 pub fn load_config(path: &Path) -> Result<Config> {
-    debug!("Loading config from: {:?}", path);
+    debug!("Loading config from: {path:?}");
 
     if !path.exists() {
-        error!("Config file not found: {:?}", path);
-        return Err(eyre::eyre!("Config file not found: {:?}", path));
+        error!("Config file not found: {path:?}");
+        return Err(eyre::eyre!("Config file not found: {path:?}"));
     }
 
-    let content = fs::read_to_string(path)
-        .with_context(|| format!("Failed to read config file: {:?}", path))?;
+    let content = fs::read_to_string(path).with_context(|| format!("Failed to read config file: {path:?}"))?;
 
-    debug!("Config file content length: {} bytes", content.len());
+    debug!("Config file content length: {len} bytes", len = content.len());
 
-    let config: Config = serde_yaml::from_str(&content)
-        .with_context(|| format!("Failed to parse YAML config: {:?}", path))?;
+    let config: Config =
+        serde_yaml::from_str(&content).with_context(|| format!("Failed to parse YAML config: {path:?}"))?;
 
-    info!("Successfully loaded config from: {:?}", path);
+    info!("Successfully loaded config from: {path:?}");
     Ok(config)
 }
 
