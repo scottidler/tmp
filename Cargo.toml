@@ -2,6 +2,9 @@
 name = "tmp"
 version = "0.1.0"
 edition = "2024"
+authors = ["Scott Idler <scott.a.idler@gmail.com>"]
+build = "build.rs"
+description = "Helper function to quickly make file types defined in the config file"
 
 [dependencies]
 clap = { version = "4.5.40", features = ["derive"] }

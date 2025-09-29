@@ -1,6 +1,8 @@
+mod cli;
 mod config;
 
-use clap::{Arg, Command};
+use clap::Parser;
+use cli::Cli;
 use config::{Config, Kind, load_config};
 use eyre::{Context, Result};
 use log::{debug, error, info, warn};
@@ -153,57 +155,12 @@ fn main() -> Result<()> {
 
     info!("Starting tmp application");
 
-    let matches = Command::new("tmp")
-        .version("0.1.0")
-        .author("Scott Idler")
-        .about("Helper function to quickly make file types defined in the config file")
-        .arg(
-            Arg::new("config")
-                .long("config")
-                .value_name("FILEPATH")
-                .help("Config filepath")
-                .default_value("~/.config/tmp/tmp.yml"),
-        )
-        .arg(
-            Arg::new("nerf")
-                .short('N')
-                .long("nerf")
-                .action(clap::ArgAction::SetTrue)
-                .help("Only print contents of the file to be made"),
-        )
-        .arg(
-            Arg::new("rm")
-                .short('r')
-                .long("rm")
-                .action(clap::ArgAction::SetTrue)
-                .help("Delete filename"),
-        )
-        .arg(
-            Arg::new("chmod")
-                .short('c')
-                .long("chmod")
-                .value_name("MODE")
-                .help("Set the value to chmod the file to"),
-        )
-        .arg(
-            Arg::new("kind")
-                .value_name("KIND")
-                .help("Choose which kind of tmp file")
-                .required(true)
-                .index(1),
-        )
-        .arg(
-            Arg::new("name")
-                .value_name("NAME")
-                .help("Optionally name the script")
-                .index(2),
-        )
-        .get_matches();
+    let cli = Cli::parse();
 
     debug!("Parsed command line arguments");
 
     // Expand tilde in config path
-    let config_path = matches.get_one::<String>("config").unwrap();
+    let config_path = &cli.config;
     let config_path = if config_path.starts_with('~') {
         let home = std::env::var("HOME").context("HOME environment variable not set")?;
         PathBuf::from(config_path.replacen('~', &home, 1))
@@ -217,12 +174,13 @@ fn main() -> Result<()> {
 
     let app = Tmp::new(config);
 
-    let kind = matches.get_one::<String>("kind").unwrap();
-    let name = matches.get_one::<String>("name").map(|s| s.as_str());
-    let nerf = matches.get_flag("nerf");
-    let rm = matches.get_flag("rm");
-    let chmod = matches
-        .get_one::<String>("chmod")
+    let kind = &cli.kind;
+    let name = cli.name.as_deref();
+    let nerf = cli.nerf;
+    let rm = cli.rm;
+    let chmod = cli
+        .chmod
+        .as_ref()
         .map(|s| u32::from_str_radix(s, 8))
         .transpose()
         .context("Invalid chmod value, must be octal")?;
