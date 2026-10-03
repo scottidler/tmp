@@ -382,10 +382,14 @@ mod tests {
         let filename_without_suffix = file_path.with_extension("").to_string_lossy().to_string();
         tmp.create_file("no-chmod", &filename_without_suffix).unwrap();
 
-        let metadata = fs::metadata(&file_path).unwrap();
-        let permissions = metadata.permissions();
-        // Should default to whatever the system default is (0o664 = 436 decimal)
-        assert_eq!(permissions.mode() & 0o777, 0o664);
+        // The default mode depends on the process umask (002 locally, 022 on CI runners),
+        // so compare against a plain File::create made under the same umask.
+        let reference_path = tempdir.path().join("reference.txt");
+        File::create(&reference_path).unwrap();
+        let expected_mode = fs::metadata(&reference_path).unwrap().permissions().mode() & 0o777;
+
+        let actual_mode = fs::metadata(&file_path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(actual_mode, expected_mode);
     }
 
     #[test]

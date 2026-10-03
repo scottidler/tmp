@@ -1,0 +1,14 @@
+name: ci
+
+# CI = `otto ci` via the shared rust-ci workflow; the caller owns the trigger.
+on:
+  push:
+    branches: [main]
+  pull_request: {}
+
+permissions:
+  contents: read
+
+jobs:
+  ci:
+    uses: tatari-tv/github-actions-public/.github/workflows/rust-ci.yml@v2.0.0
