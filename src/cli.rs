@@ -4,7 +4,7 @@ use clap::Parser;
 #[command(
     name = "tmp",
     about = "Helper function to quickly make file types defined in the config file",
-    version = env!("GIT_DESCRIBE"),
+    version = env!("BUILD_VERSION"),
     author = "Scott Idler <scott.a.idler@gmail.com>",
     after_help = "Logs are written to: ~/.local/share/tmp/tmp.log"
 )]

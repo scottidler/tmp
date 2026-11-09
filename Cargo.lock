@@ -68,6 +68,11 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1b8e56985ec62d17e9c1001dc89c88ecd7dc08e47eba5ec7c29c7b5eeecde967"
 
 [[package]]
+name = "build-version"
+version = "0.1.0"
+source = "git+https://github.com/tatari-tv/build-version-rs?tag=v0.1.0#06411938a54d50b035784b4bb6d9ffb9a187acc7"
+
+[[package]]
 name = "cfg-if"
 version = "1.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -440,6 +445,7 @@ dependencies = [
 name = "tmp"
 version = "0.1.2"
 dependencies = [
+ "build-version",
  "clap",
  "env_logger",
  "eyre",
